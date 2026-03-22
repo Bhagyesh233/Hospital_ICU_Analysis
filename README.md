@@ -6,9 +6,9 @@ A data analysis project examining ICU and SICU bed capacity across U.S. hospital
 
 This project loads hospital bed data into a SQLite database and uses SQL queries to analyze ICU (bed_id = 4) and SICU (bed_id = 15) bed distribution across hospitals. The analysis identifies top-performing hospitals based on licensed, census, and staffed bed counts to support leadership decision-making.
 
-## Authors
+## Author
 
-Bhagyesh Vaze, Samruddhi, Kajol, Om
+Bhagyesh Vaze
 
 ## Dataset
 
