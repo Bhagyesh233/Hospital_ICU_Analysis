@@ -1,0 +1,195 @@
+---
+title: "Hospital ICU Bed Data Analysis"
+author: "Bhagyesh, Samruddhi, Kajol, Om"
+output:
+  html_document:
+    toc: true
+    toc_float: false
+    toc_depth: 4
+    df_print: paged
+---
+
+
+```{r load libraries}
+library(tidyverse)
+
+if (!requireNamespace("RSQLite", quietly = TRUE)) {
+  install.packages("RSQLite")
+}
+library(RSQLite)
+library(DBI)
+```
+
+
+```{r}
+# Connect to the database
+hospital <- dbConnect(RSQLite::SQLite(), "hospital.db")
+
+#read csv files containing data
+bed_type_data <- read.csv('/Users/bhava/Documents/Hospital_ICU_Analysis/bed_type-1.csv')
+business_data <- read.csv('/Users/bhava/Documents/Hospital_ICU_Analysis/business-1.csv')
+bed_fact_data <- read.csv('/Users/bhava/Documents/Hospital_ICU_Analysis/bed_fact-1.csv')
+
+# table drop for reproducibility
+dbExecute(hospital, 'DROP TABLE IF EXISTS bed_type')
+dbExecute(hospital, 'DROP TABLE IF EXISTS business')
+dbExecute(hospital, 'DROP TABLE IF EXISTS bed_fact')
+
+# Create a table named bed_type
+dbExecute(hospital, "CREATE TABLE bed_type (
+                  bed_id PRIMARY KEY,
+                  bed_code CHAR(2),
+                  bed_desc TEXT)")
+
+# Create a table named business
+dbExecute(hospital, "CREATE TABLE business (
+                  ims_org_id PRIMERY KEY,
+                  business_name TEXT,
+                  ttl_license_beds INT,
+                  ttl_census_beds INT,
+                  ttl_staffed_beds INT,
+                  bed_cluster_id INT)")
+
+# Create a table named bed_fact
+dbExecute(hospital, "CREATE TABLE bed_fact (
+                  ims_org_id,
+                  bed_id INT,
+                  license_beds INT,
+                  census_beds INT,
+                  staffed_beds INT)")
+
+#Import the entire data from the CSV file into sql table
+dbWriteTable(hospital, "bed_type", bed_type_data, append = TRUE, row.names = FALSE)
+dbWriteTable(hospital, "business", business_data, append = TRUE, row.names = FALSE)
+dbWriteTable(hospital, "bed_fact", bed_fact_data, append = TRUE, row.names = FALSE)
+
+# verification
+dbGetQuery(hospital, 'SELECT * FROM bed_type')
+dbGetQuery(hospital, 'SELECT * FROM business limit 10')
+dbGetQuery(hospital, 'SELECT * FROM bed_fact limit 10')
+
+```
+**Identify the dimensions from each dimension table**
+
+For bed_type table bed_id is primary key, all columns here are dimensions, as they provide descriptive information about bed types.
+
+For business table, ims_org_id (Primary Key), business_name, and bed_cluster_id are considered as Dimensions and ttl_license_beds, ttl_census_beds, ttl_staffed_beds represent quantities and could be aggregated, so they are considered facts.
+
+**Identify the Facts variables from the single Fact Table**
+For bed_fact table, ims_org_id, bed_id (these are keys linking to other tables) are considered as Dimensions and license_beds, census_beds, staffed_beds are considered as facts as they are countable and aggregable variables representing bed volumes.
+
+
+**Analysis for Leadership**
+
+Identify which hospitals have an Intensive Care Unit (ICU bed_id = 4) bed or a Surgical Intensive Care Unit (SICU bed_id = 15) bed.
+
+
+```{r}
+# table drop for reproducibility
+dbExecute(hospital, 'DROP TABLE IF EXISTS hospital_beds')
+
+# List of Hospitals with ICU and SICU beds
+dbExecute(hospital, "CREATE TABLE hospital_beds AS 
+                      SELECT business.ims_org_id, business.business_name, bed_fact.bed_id, bed_type.bed_desc, bed_fact.license_beds,     bed_fact.census_beds, bed_fact.staffed_beds
+                      FROM bed_fact
+                      JOIN bed_type on bed_type.bed_id = bed_fact.bed_id
+                      JOIN business on business.ims_org_id = bed_fact.ims_org_id
+                      WHERE bed_type.bed_id IN (4,15) 
+                      order by bed_type.bed_id desc")
+
+```
+
+Summary reports
+License beds: List of Top 10 Hospitals ordered descending by the total ICU or SICU license beds.
+```{r}
+dbGetQuery(hospital, "SELECT business_name, Sum(license_beds) as total_license_beds
+                      FROM hospital_beds
+                      GROUP By ims_org_id
+                      ORDER By total_license_beds DESC LIMIT 10")
+
+```
+
+Census beds: List of Top 10 Hospitals ordered descending by the total ICU or SICU census beds.
+```{r}
+ dbGetQuery(hospital, "SELECT business_name, Sum(census_beds) as total_census_beds
+                      FROM hospital_beds
+                      GROUP By ims_org_id
+                      ORDER By total_census_beds DESC LIMIT 10")
+```
+Staffed beds: List of Top 10 Hospitals ordered descending by the total ICU or SICU staffed beds.
+```{r}
+dbGetQuery(hospital, "SELECT business_name, Sum(staffed_beds) as total_staffed_beds
+                      FROM hospital_beds
+                      GROUP By ims_org_id
+                      ORDER By total_staffed_beds DESC LIMIT 10")
+```
+
+**Interpretation of Findings**
+
+Top Hospitals by Bed Type:
+  
+Licensed Beds: Phoenix Children’s Hospital (247 beds) and University of Maryland Medical Center (220 beds) are the top hospitals based on total licensed ICU and SICU beds. High capacity in this instance would mean very high potential both on the patient volume and operational preparedness.
+  
+Census Beds: Shands Hospital at the University of Florida (167 beds) and Dallas County Hospital Association (145 beds) lead in census beds.This demonstrates a high current occupancy rate. It could indicate that there is a need for critical care assistance.
+  
+Staffed Beds: Vidant Medical Center (203 beds) and Rady Children’s Hospital and Health Center (200 beds) have the most staffed beds, suggesting well-established staffing infrastructure that can accommodate an increase in nursing staff.
+
+
+Hospitals Appearing on Multiple Lists:
+
+University of Maryland Medical Center and Phoenix Children’s Hospital are present on more than one list, suggesting these facilities have both the capacity and staffing resources to support an intervention effectively. University of Maryland Medical Center, in particular, ranks highly in both licensed and staffed beds, indicating it can efficiently absorb additional nursing resources in its ICU and SICU units.
+Vidant Medical Center also appears on the lists for licensed and staffed beds, showing it has both the necessary infrastructure and staffing flexibility, making it another strong candidate.
+
+
+Recommendation:
+
+According to analytics, we feel that the University of Maryland Medical Center and Phoenix Children's Hospital best fit the pilot program criteria. Both have high bed volumes, solid staffing resources, and meet the cost-effectiveness criteria.
+Their competency puts them in a position where they make significant contributions to the improvement of care in the ICU/SICU through better patient outcomes and maintained prime patient-care ratios.
+
+**Drill down investigation**
+
+License beds: List of Top 10 Hospitals (hospitals that have at least 1 ICU bed and at least 1 SICU bed) ordered descending by the total ICU or SICU license beds
+```{r}
+dbGetQuery(hospital, "SELECT business_name, Sum(license_beds) as total_license_beds
+                      FROM hospital_beds
+                      GROUP By ims_org_id
+                      HAVING COUNT(DISTINCT bed_id) = 2
+                      ORDER By total_license_beds DESC LIMIT 10")
+```
+
+Census beds: List of Top 10 Hospitals (hospitals that have at least 1 ICU bed and at least 1 SICU bed) ordered descending by the total ICU or SICU census beds
+```{r}
+dbGetQuery(hospital, "SELECT business_name, Sum(census_beds) as total_census_beds
+                      FROM hospital_beds
+                      GROUP By ims_org_id
+                      HAVING COUNT(DISTINCT bed_id) = 2
+                      ORDER By total_census_beds DESC LIMIT 10")
+```
+Staffed beds: List of Top 10 Hospitals (hospitals that have at least 1 ICU bed and at least 1 SICU bed) ordered descending by the total ICU or SICU staffed beds
+```{r}
+dbGetQuery(hospital, "SELECT business_name, Sum(staffed_beds) as total_staffed_beds
+                      FROM hospital_beds
+                      GROUP By ims_org_id
+                      HAVING COUNT(DISTINCT bed_id) = 2
+                      ORDER By total_staffed_beds DESC LIMIT 10")
+```
+
+From this we can see several strong performers:
+University of Maryland Medical Center and Shands Hospital at the University of Florida stand out by consistently appearing at the top across all three bed metrics:
+
+License beds: UMMC - 220, Shands - 167
+
+Census beds: Shands - 167, UMMC -127
+
+Staffed beds: UMMC - 171, Shands  - 167
+
+
+**Final recommendation**
+
+Based on our analysis, we recommend two hospitals for the pilot program:
+
+1. University of Maryland Medical Center is our top choice for the pilot program. The hospital performs well in managing critical care beds, with 220 licensed beds and 171 staffed beds. It has both ICU and SICU units, making it ideal for testing the new nursing program.
+
+2. Shands Hospital at the University of Florida would be an excellent second site. The hospital shows strong performance with 167 beds consistently across all measures, and it efficiently manages both ICU and SICU units.
+
+We have kept the recommendation focused on beds and critical care units since these are what Leadership specifically asked about for selecting pilot sites. Both hospitals have the right combination of size and critical care capabilities to test if adding more nurses will improve patient care. Their strong bed management suggests they can effectively implement the new nursing program.
